@@ -45,6 +45,16 @@ app.post('/descifrar', verificarToken, (req, res) => {
   }
 });
 
+app.use((error, req, res, next) => {
+  if (res.headersSent) return next(error);
+
+  if (error.name === 'UnauthorizedError') {
+    return res.status(401).json({ error: 'No autorizado' });
+  }
+
+  return res.status(500).json({ error: 'Error interno' });
+});
+
 const PORT = process.env.PORT || 3000;
 // Solo escucha si se ejecuta directamente (node servidor.js).
 // Al importarlo desde una prueba de integracion, NO arranca el puerto.

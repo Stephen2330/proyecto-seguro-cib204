@@ -9,7 +9,7 @@ services:
     ports:
       - "3000:3000"            # expone el puerto 3000 en tu equipo
     environment:
-      AUTH_ENABLED: "false"    # cambia a "true" para exigir token (IAM)
+      AUTH_ENABLED: "true"    # cambia a "true" para exigir token (IAM)
       # issuer = host desde donde pides el token (tu equipo)
       KEYCLOAK_ISSUER: "http://localhost:8080/realms/appmovil"
       # jwks = donde la app (en la red de contenedores) lee las llaves de Keycloak
@@ -20,7 +20,9 @@ services:
   # --- Keycloak: gestion de identidad y acceso (IAM) ---
   keycloak:
     image: quay.io/keycloak/keycloak:24.0
-    command: start-dev
+    command:
+      - start-dev
+      - --proxy-headers=xforwarded
     environment:
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin

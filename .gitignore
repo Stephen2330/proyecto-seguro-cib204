@@ -8,3 +8,5 @@ node_modules/
 # Reportes y temporales
 coverage/
 *.log
+
+app-movil/.expo/
