@@ -2,6 +2,7 @@
 
 Estructura general y relacion entre modulos y componentes.
 
+```text
 Sistema de cifrado seguro
 |
 |- 1. Aplicacion movil (cliente)            [app-movil/]
@@ -22,7 +23,10 @@ Sistema de cifrado seguro
 |
 |- 5. Pipeline DevSecOps                     [.github/workflows/]
       |- SAST, SCA, escaneo de imagen, DAST
+```
 
+```text
 Relacion principal:
   App movil  --(HTTP + token)-->  Servicio de cifrado  --(valida token)-->  Keycloak
   Servicio de cifrado  --(usa)-->  modulo cifrado.js (RSA)
+  ```
