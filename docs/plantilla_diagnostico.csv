@@ -1,0 +1,5 @@
+Componente,Vulnerabilidad,Nivel de riesgo (Alto/Medio/Bajo),Consecuencia,Mitigacion propuesta
+Gestion de llaves,Llave privada sin proteger,Alto,Un atacante podria descifrar todo,Guardar fuera del codigo y con permisos
+Servicio /cifrar,Falta de validacion de entrada,Medio,Errores o abuso del servicio,Validar tipo y longitud
+Comunicacion,Canal sin cifrar (HTTP),Medio,Interceptacion de datos,Habilitar HTTPS/TLS
+Dependencias,Libreria con CVE conocido,Alto,Ejecucion de codigo malicioso,Actualizar segun npm audit / Trivy

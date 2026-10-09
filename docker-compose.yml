@@ -1,0 +1,28 @@
+# docker-compose.yml
+# Levanta DOS contenedores juntos: el servicio de cifrado y Keycloak (IAM).
+# Uso:  docker compose up -d --build
+services:
+
+  # --- El servicio de cifrado (nuestra aplicacion) ---
+  cifrado:
+    build: ./servidor          # construye la imagen usando servidor/Dockerfile
+    ports:
+      - "3000:3000"            # expone el puerto 3000 en tu equipo
+    environment:
+      AUTH_ENABLED: "false"    # cambia a "true" para exigir token (IAM)
+      # issuer = host desde donde pides el token (tu equipo)
+      KEYCLOAK_ISSUER: "http://localhost:8080/realms/appmovil"
+      # jwks = donde la app (en la red de contenedores) lee las llaves de Keycloak
+      KEYCLOAK_JWKS_URI: "http://keycloak:8080/realms/appmovil/protocol/openid-connect/certs"
+    depends_on:
+      - keycloak
+
+  # --- Keycloak: gestion de identidad y acceso (IAM) ---
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    command: start-dev
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    ports:
+      - "8080:8080"            # consola de Keycloak en http://localhost:8080

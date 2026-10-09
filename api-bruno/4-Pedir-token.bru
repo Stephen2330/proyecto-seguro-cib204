@@ -1,0 +1,22 @@
+meta {
+  name: 4-Pedir-token
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{keycloak}}/realms/appmovil/protocol/openid-connect/token
+  body: formUrlEncoded
+  auth: none
+}
+
+body:form-urlencoded {
+  client_id: servicio-cifrado
+  grant_type: password
+  username: demo
+  password: CAMBIA_ESTA_CLAVE
+}
+
+script:post-response {
+  bru.setVar("token", res.body.access_token);
+}

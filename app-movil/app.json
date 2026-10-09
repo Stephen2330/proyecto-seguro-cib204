@@ -1,0 +1,9 @@
+{
+  "expo": {
+    "name": "App Movil Cifrado CIB-204",
+    "slug": "app-movil-cifrado",
+    "version": "1.0.0",
+    "platforms": ["ios", "android", "web"],
+    "orientation": "portrait"
+  }
+}

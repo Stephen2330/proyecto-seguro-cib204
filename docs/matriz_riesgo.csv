@@ -1,0 +1,3 @@
+Hallazgo,Origen (herramienta),Componente,Probabilidad (1-5),Impacto (1-5),Riesgo (PxI),Nivel
+Ejemplo: dependencia vulnerable,Trivy/npm audit,Dependencias,3,5,15,Alto
+Ejemplo: falta cabecera de seguridad,OWASP ZAP,Servicio web,3,2,6,Bajo

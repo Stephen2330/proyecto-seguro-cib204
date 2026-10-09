@@ -1,0 +1,17 @@
+meta {
+  name: 3-Descifrar
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{host}}/descifrar
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "cifrado": "PEGA_AQUI_EL_TEXTO_CIFRADO"
+  }
+}

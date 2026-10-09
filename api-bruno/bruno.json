@@ -1,0 +1,6 @@
+{
+  "version": "1",
+  "name": "CIB-204 API de cifrado",
+  "type": "collection",
+  "ignore": ["node_modules", ".git"]
+}

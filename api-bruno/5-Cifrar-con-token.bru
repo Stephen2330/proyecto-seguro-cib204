@@ -1,0 +1,21 @@
+meta {
+  name: 5-Cifrar-con-token
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{host}}/cifrar
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "texto": "Ahora si, con identidad valida"
+  }
+}

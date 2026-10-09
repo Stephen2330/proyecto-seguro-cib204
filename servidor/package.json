@@ -1,0 +1,23 @@
+{
+  "name": "servicio-cifrado",
+  "version": "1.0.0",
+  "description": "Servicio de cifrado RSA - Proyecto Final CIB-204 (DevSecOps)",
+  "main": "servidor.js",
+  "scripts": {
+    "start": "node servidor.js",
+    "test": "jest",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.22.2",
+    "express-jwt": "^8.4.1",
+    "jwks-rsa": "^3.1.0"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.0",
+    "eslint-plugin-security": "^2.1.1",
+    "jest": "^29.7.0",
+    "supertest": "^7.0.0"
+  }
+}

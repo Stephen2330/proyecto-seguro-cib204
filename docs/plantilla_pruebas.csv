@@ -1,0 +1,6 @@
+ID,Tipo(Unitaria/Integracion/Sistema),Caso de prueba,Datos de entrada,Resultado esperado,Resultado real,Estado(OK/Falla)
+1,Unitaria,cifrar y descifrar devuelve el original,"texto=""Hola""","descifrado == ""Hola""",,
+2,Integracion,/cifrar y /descifrar de extremo a extremo,"texto=""Mensaje""",texto recuperado igual,,
+3,Integracion,entrada invalida en /cifrar,"texto=""""",HTTP 400,,
+4,Sistema,cifrar desde la app movil con token,"texto + token valido",HTTP 200 con cifrado,,
+5,Sistema,acceso sin token con AUTH_ENABLED=true,sin token,HTTP 401,,
