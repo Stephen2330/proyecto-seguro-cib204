@@ -1,0 +1,10 @@
+# Dependencias
+node_modules/
+
+# Llaves y secretos (NUNCA subir)
+*.pem
+.env
+
+# Reportes y temporales
+coverage/
+*.log

@@ -1,0 +1,19 @@
+{
+  "name": "proyecto-seguro-cib204",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    "ghcr.io/devcontainers/features/node:1": { "version": "20" }
+  },
+  "forwardPorts": [3000, 8080],
+  "portsAttributes": {
+    "3000": { "label": "API de cifrado" },
+    "8080": { "label": "Keycloak" }
+  },
+  "postCreateCommand": "cd servidor && npm install",
+  "customizations": {
+    "vscode": {
+      "extensions": ["ms-azuretools.vscode-docker", "dbaeumer.vscode-eslint"]
+    }
+  }
+}
