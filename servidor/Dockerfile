@@ -1,14 +1,14 @@
 # Dockerfile del servicio de cifrado (imagen endurecida)
 
 # --- Etapa 1: construccion ---
-FROM node:20-slim AS build
+FROM node:24-slim AS build
 WORKDIR /app
 COPY package*.json ./
 RUN npm install --omit=dev
 COPY . .
 
 # --- Etapa 2: imagen final (mas pequena, sin herramientas de build) ---
-FROM node:20-slim
+FROM node:24-slim
 WORKDIR /app
 # Crear un usuario sin privilegios
 RUN useradd -m appuser
