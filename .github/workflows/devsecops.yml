@@ -1,72 +1,198 @@
-# Pipeline DevSecOps - se ejecuta en GitHub Actions ante cada cambio.
 name: Pipeline DevSecOps
+run-name: Sube material inseguro (Fase 1)
 
 on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
-
-  # 1) Secretos (Gitleaks) + Analisis estatico del codigo (SAST, Semgrep)
-  sast_secretos:
+  sast_semgrep:
+    name: SAST - Semgrep
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Buscar secretos (Gitleaks)
-        uses: gitleaks/gitleaks-action@v2
-      - name: Analisis estatico (Semgrep)
-        uses: semgrep/semgrep-action@v1
-        with:
-          config: p/ci
+      - uses: actions/checkout@v7
 
-  # 2) Analisis de dependencias (SCA)
+      - name: Analizar código con Semgrep
+        id: semgrep
+        continue-on-error: true
+        run: |
+          docker run --rm \
+            -v "$PWD:/src" \
+            -w /src \
+            semgrep/semgrep:latest \
+            semgrep scan --config p/ci --error \
+            --json-output semgrep-report.json /src
+
+      - name: Guardar reporte de Semgrep
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: reporte-semgrep
+          path: semgrep-report.json
+          if-no-files-found: warn
+
+      - name: Marcar hallazgos de Semgrep
+        if: always()
+        run: |
+          if [ "${{ steps.semgrep.outcome }}" != "success" ]; then
+            exit 1
+          fi
+
+  sast_codeql:
+    name: SAST - CodeQL
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Inicializar CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: javascript-typescript
+          build-mode: none
+
+      - name: Analizar con CodeQL
+        uses: github/codeql-action/analyze@v4
+
+  secretos:
+    name: Secretos - Gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Buscar secretos con Gitleaks
+        uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: "false"
+
   sca:
+    name: SCA - Dependencias
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: "24"
+          package-manager-cache: false
+
       - name: Instalar dependencias
-        run: cd servidor && npm install
-      - name: Auditar dependencias (npm audit)
-        run: cd servidor && npm audit --audit-level=high || true
-      - name: Escaneo de dependencias (Trivy)
-        uses: aquasecurity/trivy-action@master
+        id: npm_ci
+        continue-on-error: true
+        working-directory: servidor
+        run: npm ci
+
+      - name: Ejecutar pruebas unitarias
+        id: npm_test
+        continue-on-error: true
+        working-directory: servidor
+        run: npm test -- --runInBand
+
+      - name: Revisar dependencias con Trivy
+        id: trivy_fs
+        if: always()
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: servidor
           severity: HIGH,CRITICAL
+          exit-code: "1"
 
-  # 3) Construir la imagen, escanearla y generar el SBOM
+      - name: Auditar dependencias con npm
+        id: npm_audit
+        if: always()
+        continue-on-error: true
+        working-directory: servidor
+        run: npm audit --audit-level=high
+
+      - name: Marcar fallos de SCA
+        if: always()
+        run: |
+          if [[ "${{ steps.npm_ci.outcome }}" != "success" ||
+                "${{ steps.trivy_fs.outcome }}" != "success" ||
+                "${{ steps.npm_test.outcome }}" != "success" ||
+                "${{ steps.npm_audit.outcome }}" != "success" ]]; then
+            exit 1
+          fi
+
   imagen:
-    needs: [sast_secretos, sca]
+    name: Imagen - Trivy + SBOM
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Construir la imagen
+      - uses: actions/checkout@v7
+
+      - name: Construir imagen
+        id: build_image
+        continue-on-error: true
         run: docker build -t cifrado:ci ./servidor
-      - name: Escanear la imagen (Trivy)
-        uses: aquasecurity/trivy-action@master
+
+      - name: Escanear imagen con Trivy
+        id: trivy_image
+        if: always()
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: cifrado:ci
           severity: HIGH,CRITICAL
-      - name: Generar SBOM (Syft)
-        uses: anchore/sbom-action@v0
+          exit-code: "1"
+
+      - name: Generar SBOM con Syft
+        id: sbom
+        if: always()
+        continue-on-error: true
+        uses: anchore/sbom-action@v0.24.0
         with:
           image: cifrado:ci
+          artifact-name: sbom-cifrado
 
-  # 4) DAST: probar la app en ejecucion con OWASP ZAP
+      - name: Marcar fallos de imagen o SBOM
+        if: always()
+        run: |
+          if [[ "${{ steps.build_image.outcome }}" != "success" ||
+                "${{ steps.trivy_image.outcome }}" != "success" ||
+                "${{ steps.sbom.outcome }}" != "success" ]]; then
+            exit 1
+          fi
+
   dast:
-    needs: imagen
+    name: DAST - OWASP ZAP
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Levantar la app
+      - uses: actions/checkout@v7
+
+      - name: Levantar API y Keycloak
         run: docker compose up -d --build cifrado
-      - name: Esperar a que responda
-        run: sleep 20
-      - name: DAST con OWASP ZAP (baseline)
-        uses: zaproxy/action-baseline@v0.12.0
+
+      - name: Esperar respuesta de la API
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://localhost:3000/salud >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose logs
+          exit 1
+
+      - name: Analizar con OWASP ZAP
+        uses: zaproxy/action-baseline@v0.15.0
         with:
-          target: 'http://localhost:3000'
+          target: http://localhost:3000
+          artifact_name: reporte-zap
+          allow_issue_writing: false
+          fail_action: false
+
+      - name: Detener servicios
+        if: always()
+        run: docker compose down --volumes
