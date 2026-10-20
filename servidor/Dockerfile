@@ -11,7 +11,8 @@ COPY . .
 FROM node:20-slim
 WORKDIR /app
 # Crear un usuario sin privilegios
-RUN useradd -m appuser
+RUN useradd -m appuser \
+    && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 COPY --from=build /app /app
 # Dar propiedad de /app al usuario para que pueda escribir las llaves RSA al arrancar
 RUN chown -R appuser:appuser /app
