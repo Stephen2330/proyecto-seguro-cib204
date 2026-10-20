@@ -97,7 +97,12 @@ jobs:
         continue-on-error: true
         working-directory: servidor
         run: npm test -- --runInBand
-
+        
+      - name: Limpiar llaves temporales generadas por las pruebas
+        if: always()
+        working-directory: servidor
+        run: rm -f clave_publica.pem clave_privada.pem
+        
       - name: Revisar dependencias con Trivy
         id: trivy_fs
         if: always()
