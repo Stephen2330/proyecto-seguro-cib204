@@ -140,7 +140,7 @@ jobs:
       - name: Construir imagen
         id: build_image
         continue-on-error: true
-        run: docker build -t cifrado:ci ./servidor
+        run: docker build --pull -t cifrado:ci ./servidor
 
       - name: Escanear imagen con Trivy
         id: trivy_image
