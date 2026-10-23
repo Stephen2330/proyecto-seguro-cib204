@@ -142,20 +142,66 @@ jobs:
         continue-on-error: true
         run: docker build --pull -t cifrado:ci ./servidor
 
-      - name: Registrar ID de imagen para Trivy
-        id: image_id
-        if: steps.build_image.outcome == 'success'
-        run: docker image inspect cifrado:ci --format 'TRIVY_IMAGE_ID={{.Id}}'
-
-      - name: Escanear imagen con Trivy
-        id: trivy_image
+      - name: Registrar procedencia de la imagen y del run
+        id: provenance
         if: always()
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          IMAGE_ID=$(docker image inspect cifrado:ci --format '{{.Id}}')
+          {
+            printf 'RUN_ID=%s\n' "$GITHUB_RUN_ID"
+            printf 'EVENT=%s\n' "$GITHUB_EVENT_NAME"
+            printf 'REF=%s\n' "$GITHUB_REF"
+            printf 'GITHUB_SHA=%s\n' "$GITHUB_SHA"
+            printf 'CHECKOUT_SHA=%s\n' "$(git rev-parse HEAD)"
+            printf 'PR_HEAD_SHA=%s\n' "${PR_HEAD_SHA:-n/a}"
+            printf 'IMAGE_ID=%s\n' "$IMAGE_ID"
+          } | tee trivy-provenance.txt
+
+      - name: Escanear imagen con Trivy (todas las severidades)
+        id: trivy_image
+        if: steps.build_image.outcome == 'success'
         continue-on-error: true
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: cifrado:ci
-          severity: HIGH,CRITICAL
-          exit-code: "1"
+          scanners: vuln
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          format: json
+          output: trivy-image-full.json
+          exit-code: "0"
+
+      - name: Resumir Trivy y aplicar umbral
+        id: trivy_gate
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          if [[ ! -s trivy-image-full.json ]]; then
+            echo "No se generó el reporte JSON de Trivy."
+            exit 1
+          fi
+
+          {
+            echo "### Trivy: imagen cifrado:ci"
+            echo "| Severidad | Hallazgos |"
+            echo "|---|---:|"
+            for severity in CRITICAL HIGH MEDIUM LOW UNKNOWN; do
+              count=$(jq --arg severity "$severity" \
+                '[.Results[]?.Vulnerabilities[]? | select(.Severity == $severity)] | length' \
+                trivy-image-full.json)
+              echo "| $severity | $count |"
+            done
+          } | tee trivy-image-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+          blockers=$(jq \
+            '[.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH" or .Severity == "CRITICAL")] | length' \
+            trivy-image-full.json)
+          if [[ "$blockers" -gt 0 ]]; then
+            echo "Gate bloqueado: $blockers hallazgos HIGH/CRITICAL."
+            exit 1
+          fi
 
       - name: Generar SBOM con Syft
         id: sbom
@@ -166,12 +212,24 @@ jobs:
           image: cifrado:ci
           artifact-name: sbom-cifrado
 
+      - name: Guardar evidencia Trivy
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: trivy-evidencia-${{ github.run_id }}
+          path: |
+            trivy-image-full.json
+            trivy-image-summary.md
+            trivy-provenance.txt
+          if-no-files-found: warn
+
       - name: Marcar fallos de imagen o SBOM
         if: always()
         run: |
           if [[ "${{ steps.build_image.outcome }}" != "success" ||
-                "${{ steps.image_id.outcome }}" != "success" ||
+                "${{ steps.provenance.outcome }}" != "success" ||
                 "${{ steps.trivy_image.outcome }}" != "success" ||
+                "${{ steps.trivy_gate.outcome }}" != "success" ||
                 "${{ steps.sbom.outcome }}" != "success" ]]; then
             exit 1
           fi

@@ -1,10 +1,19 @@
 // Prueba de INTEGRACION: verifica que el servidor web y el modulo de cifrado
 // funcionan juntos de extremo a extremo (sin token, con AUTH_ENABLED=false).
 process.env.AUTH_ENABLED = 'false';
+process.env.DIAGNOSTIC_ALLOWED_HOSTS = '8.8.8.8';
 const request = require('supertest');
 const app = require('./servidor');
 
 describe('Integracion del servicio de cifrado', () => {
+  test('rechaza un host manipulado en /diagnostico', async () => {
+  const r = await request(app)
+    .get('/diagnostico')
+    .query({ host: '8.8.8.8;id' });
+
+  expect(r.status).toBe(400);
+  expect(r.body.error).toBe('Host invalido');
+});
   test('GET /salud responde estado ok', async () => {
     const r = await request(app).get('/salud');
     expect(r.status).toBe(200);

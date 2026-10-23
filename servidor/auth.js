@@ -24,9 +24,12 @@ if (AUTH_ENABLED) {
   const ISSUER   = process.env.KEYCLOAK_ISSUER   || 'http://localhost:8080/realms/appmovil';
   const JWKS_URI = process.env.KEYCLOAK_JWKS_URI || 'http://keycloak:8080/realms/appmovil/protocol/openid-connect/certs';
 
+  const AUDIENCE = process.env.KEYCLOAK_AUDIENCE || 'api-cifrado';
+
   middleware = expressjwt({
     secret: jwksRsa.expressJwtSecret({ cache: true, jwksUri: JWKS_URI }),
     issuer: ISSUER,
+    audience: AUDIENCE,
     algorithms: ['RS256']
   });
 }
