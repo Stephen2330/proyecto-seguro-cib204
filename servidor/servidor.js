@@ -6,8 +6,19 @@ const { verificarToken } = require('./auth');
 const { execFile } = require('node:child_process');
 const net = require('node:net');
 const helmet = require('helmet');
+const { rateLimit } = require('express-rate-limit');
 
 const app = express();
+
+const diagnosticRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => res.status(429).json({
+    error: 'Demasiadas solicitudes de diagnóstico. Intenta más tarde.'
+  })
+});
 
 app.use(helmet());
 app.use((req, res, next) => {
@@ -55,7 +66,7 @@ const clavePrivada = fs.readFileSync('clave_privada.pem', 'utf8');
 
 app.get('/salud', (req, res) => res.json({ estado: 'ok' }));
 
-app.get('/diagnostico', verificarToken, (req, res) => {
+app.get('/diagnostico', verificarToken, diagnosticRateLimit, (req, res) => {
   const host = req.query.host;
 
   if (typeof host !== 'string' || !allowedDiagnosticHosts.has(host)) {
