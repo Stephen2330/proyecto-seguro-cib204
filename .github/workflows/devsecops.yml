@@ -97,12 +97,12 @@ jobs:
         continue-on-error: true
         working-directory: servidor
         run: npm test -- --runInBand
-        
+
       - name: Limpiar llaves temporales generadas por las pruebas
         if: always()
         working-directory: servidor
         run: rm -f clave_publica.pem clave_privada.pem
-        
+
       - name: Revisar dependencias con Trivy
         id: trivy_fs
         if: always()
@@ -142,6 +142,11 @@ jobs:
         continue-on-error: true
         run: docker build --pull -t cifrado:ci ./servidor
 
+      - name: Registrar ID de imagen para Trivy
+        id: image_id
+        if: steps.build_image.outcome == 'success'
+        run: docker image inspect cifrado:ci --format 'TRIVY_IMAGE_ID={{.Id}}'
+
       - name: Escanear imagen con Trivy
         id: trivy_image
         if: always()
@@ -165,6 +170,7 @@ jobs:
         if: always()
         run: |
           if [[ "${{ steps.build_image.outcome }}" != "success" ||
+                "${{ steps.image_id.outcome }}" != "success" ||
                 "${{ steps.trivy_image.outcome }}" != "success" ||
                 "${{ steps.sbom.outcome }}" != "success" ]]; then
             exit 1
