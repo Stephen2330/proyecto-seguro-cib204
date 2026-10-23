@@ -1,20 +1,21 @@
-# Dockerfile del servicio de cifrado (imagen endurecida)
-
-# --- Etapa 1: construccion ---
-FROM node:24-slim AS build
+# Etapa 1: instalar dependencias de producción
+FROM node:24-trixie-slim AS build
+RUN npm install --global npm@11.21.1
 WORKDIR /app
 COPY package*.json ./
 RUN npm install --omit=dev
 COPY . .
 
-# --- Etapa 2: imagen final (mas pequena, sin herramientas de build) ---
-FROM node:24-slim
+# Etapa 2: runtime con ping, ejecutado sin privilegios
+FROM node:24-trixie-slim
 WORKDIR /app
-# Crear un usuario sin privilegios
-RUN useradd -m appuser
-COPY --from=build /app /app
-# Dar propiedad de /app al usuario para que pueda escribir las llaves RSA al arrancar
-RUN chown -R appuser:appuser /app
-USER appuser
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx \
+ && apt-get update \
+ && apt-get upgrade -y \
+ && apt-get install -y --no-install-recommends iputils-ping \
+ && rm -rf /var/lib/apt/lists/* \
+ && chown node:node /app
+COPY --from=build --chown=node:node /app/ /app/
+USER node
 EXPOSE 3000
 CMD ["node", "servidor.js"]

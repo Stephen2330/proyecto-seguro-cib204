@@ -1,0 +1,46 @@
+EVID-17: pruebas manuales
+Fecha UTC: 2026-10-21 04:24:22
+Origen: https://opulent-space-guacamole-rvppr9vpxpxhj4g-8081.app.github.dev
+JWT y contraseña: omitidos
+
+### Ruta protegida sin token
+Esperado: HTTP 401 | Recibido: HTTP 401 | COINCIDE
+Access-Control-Allow-Origin: https://opulent-space-guacamole-rvppr9vpxpxhj4g-8081.app.github.dev
+Vary: Origin
+Content-Type: application/json; charset=utf-8
+{"error":"No autorizado"}
+
+### Entrada vacía en /cifrar
+Esperado: HTTP 400 | Recibido: HTTP 400 | COINCIDE
+Access-Control-Allow-Origin: https://opulent-space-guacamole-rvppr9vpxpxhj4g-8081.app.github.dev
+Vary: Origin
+Content-Type: application/json; charset=utf-8
+{"error":"Entrada invalida"}
+
+### Valor manipulado en /diagnostico
+Esperado: HTTP 400 | Recibido: HTTP 404 | REVISAR
+Access-Control-Allow-Origin: https://opulent-space-guacamole-rvppr9vpxpxhj4g-8081.app.github.dev
+Vary: Origin
+Content-Type: text/html; charset=utf-8
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Error</title>
+</head>
+<body>
+<pre>Cannot GET /diagnostico</pre>
+</body>
+</html>
+
+
+### Endpoint público /salud
+Esperado: HTTP 200 | Recibido: HTTP 200 | COINCIDE
+Vary: Origin
+Content-Type: application/json; charset=utf-8
+{"estado":"ok"}
+
+### Estado de contenedores (docker compose ps)
+NAME                                IMAGE                            COMMAND                  SERVICE    CREATED          STATUS          PORTS
+proyecto-seguro-cib204-cifrado-1    proyecto-seguro-cib204-cifrado   "/nodejs/bin/node --…"   cifrado    17 minutes ago   Up 17 minutes   0.0.0.0:3000->3000/tcp, [::]:3000->3000/tcp
+proyecto-seguro-cib204-keycloak-1   quay.io/keycloak/keycloak:24.0   "/opt/keycloak/bin/k…"   keycloak   11 days ago      Up 17 minutes   0.0.0.0:8080->8080/tcp, [::]:8080->8080/tcp, 8443/tcp

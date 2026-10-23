@@ -9,11 +9,20 @@ services:
     ports:
       - "3000:3000"            # expone el puerto 3000 en tu equipo
     environment:
+      DIAGNOSTIC_ALLOWED_HOSTS: "8.8.8.8"
+      CORS_ORIGINS: "https://opulent-space-guacamole-rvppr9vpxpxhj4g-8081.app.github.dev"
       AUTH_ENABLED: "true"    # cambia a "true" para exigir token (IAM)
+      KEYCLOAK_AUDIENCE: "api-cifrado"
       # issuer = host desde donde pides el token (tu equipo)
-      KEYCLOAK_ISSUER: "http://localhost:8080/realms/appmovil"
+      KEYCLOAK_ISSUER: "https://opulent-space-guacamole-rvppr9vpxpxhj4g-8080.app.github.dev/realms/appmovil"
       # jwks = donde la app (en la red de contenedores) lee las llaves de Keycloak
       KEYCLOAK_JWKS_URI: "http://keycloak:8080/realms/appmovil/protocol/openid-connect/certs"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/salud').then(r => process.exit(r.status === 200 ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     depends_on:
       - keycloak
 

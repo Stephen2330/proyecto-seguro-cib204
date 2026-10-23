@@ -1,72 +1,325 @@
-# Pipeline DevSecOps - se ejecuta en GitHub Actions ante cada cambio.
 name: Pipeline DevSecOps
+run-name: Sube material inseguro (Fase 1)
 
 on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
-
-  # 1) Secretos (Gitleaks) + Analisis estatico del codigo (SAST, Semgrep)
-  sast_secretos:
+  sast_semgrep:
+    name: SAST - Semgrep
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Buscar secretos (Gitleaks)
-        uses: gitleaks/gitleaks-action@v2
-      - name: Analisis estatico (Semgrep)
-        uses: semgrep/semgrep-action@v1
-        with:
-          config: p/ci
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-  # 2) Analisis de dependencias (SCA)
+      - name: Analizar código con Semgrep
+        id: semgrep
+        continue-on-error: true
+        run: |
+          docker run --rm \
+            -v "$PWD:/src" \
+            -w /src \
+            semgrep/semgrep:latest \
+            semgrep scan --config p/ci \
+            --exclude 'evidencias/segundo_avance/EVID-*-ZAP-API-CIB204.html' \
+            --json-output semgrep-report.json /src
+
+      - name: Guardar reporte de Semgrep
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: reporte-semgrep
+          path: semgrep-report.json
+          if-no-files-found: warn
+
+      - name: Aplicar umbral de Semgrep
+        id: semgrep_gate
+        if: always()
+        env:
+          SEMGREP_OUTCOME: ${{ steps.semgrep.outcome }}
+        run: |
+          if [[ "$SEMGREP_OUTCOME" != "success" ]]; then
+            echo "El escaneo de Semgrep no terminó correctamente."
+            exit 1
+          fi
+
+          if [[ ! -s semgrep-report.json ]] || ! jq -e '.results | type == "array"' semgrep-report.json >/dev/null; then
+            echo "No se generó un reporte JSON válido de Semgrep."
+            exit 1
+          fi
+
+          error_findings=$(jq '[.results[]? | select(.extra.severity == "ERROR")] | length' semgrep-report.json)
+          warning_findings=$(jq '[.results[]? | select(.extra.severity == "WARNING")] | length' semgrep-report.json)
+          analysis_errors=$(jq '[.errors[]? | select(.level == "error")] | length' semgrep-report.json)
+          analysis_warnings=$(jq '[.errors[]? | select(.level == "warn")] | length' semgrep-report.json)
+
+          {
+            echo "### SAST - Semgrep"
+            echo "| Resultado | Conteo |"
+            echo "|---|---:|"
+            echo "| Hallazgos ERROR (bloqueantes) | $error_findings |"
+            echo "| Hallazgos WARNING (informativos) | $warning_findings |"
+            echo "| Errores de análisis | $analysis_errors |"
+            echo "| Advertencias de análisis parcial | $analysis_warnings |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$error_findings" -gt 0 || "$analysis_errors" -gt 0 ]]; then
+            echo "Gate bloqueado: revisar hallazgos ERROR o errores del analizador."
+            exit 1
+          fi
+
+          echo "Gate aprobado: sin hallazgos ERROR ni errores del analizador. Revisar warnings y análisis parcial en el artifact."
+
+  sast_codeql:
+    name: SAST - CodeQL
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Inicializar CodeQL
+        uses: github/codeql-action/init@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4
+        with:
+          languages: javascript-typescript
+          build-mode: none
+
+      - name: Analizar con CodeQL
+        uses: github/codeql-action/analyze@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4
+
+  secretos:
+    name: Secretos - Gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Buscar secretos con Gitleaks
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: "false"
+
   sca:
+    name: SCA - Dependencias
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 20
+          node-version: "24"
+          package-manager-cache: false
+
       - name: Instalar dependencias
-        run: cd servidor && npm install
-      - name: Auditar dependencias (npm audit)
-        run: cd servidor && npm audit --audit-level=high || true
-      - name: Escaneo de dependencias (Trivy)
-        uses: aquasecurity/trivy-action@master
+        id: npm_ci
+        continue-on-error: true
+        working-directory: servidor
+        run: npm ci
+
+      - name: Ejecutar pruebas unitarias
+        id: npm_test
+        continue-on-error: true
+        working-directory: servidor
+        run: npm test -- --runInBand
+
+      - name: Limpiar llaves temporales generadas por las pruebas
+        if: always()
+        working-directory: servidor
+        run: rm -f clave_publica.pem clave_privada.pem
+
+      - name: Revisar dependencias con Trivy
+        id: trivy_fs
+        if: always()
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
           scan-ref: servidor
           severity: HIGH,CRITICAL
+          exit-code: "1"
 
-  # 3) Construir la imagen, escanearla y generar el SBOM
+      - name: Auditar dependencias con npm
+        id: npm_audit
+        if: always()
+        continue-on-error: true
+        working-directory: servidor
+        run: npm audit --audit-level=high
+
+      - name: Marcar fallos de SCA
+        if: always()
+        run: |
+          if [[ "${{ steps.npm_ci.outcome }}" != "success" ||
+                "${{ steps.trivy_fs.outcome }}" != "success" ||
+                "${{ steps.npm_test.outcome }}" != "success" ||
+                "${{ steps.npm_audit.outcome }}" != "success" ]]; then
+            exit 1
+          fi
+
   imagen:
-    needs: [sast_secretos, sca]
+    name: Imagen - Trivy + SBOM
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Construir la imagen
-        run: docker build -t cifrado:ci ./servidor
-      - name: Escanear la imagen (Trivy)
-        uses: aquasecurity/trivy-action@master
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Construir imagen
+        id: build_image
+        continue-on-error: true
+        run: docker build --pull -t cifrado:ci ./servidor
+
+      - name: Registrar procedencia de la imagen y del run
+        id: provenance
+        if: always()
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          IMAGE_ID=$(docker image inspect cifrado:ci --format '{{.Id}}')
+          {
+            printf 'RUN_ID=%s\n' "$GITHUB_RUN_ID"
+            printf 'EVENT=%s\n' "$GITHUB_EVENT_NAME"
+            printf 'REF=%s\n' "$GITHUB_REF"
+            printf 'GITHUB_SHA=%s\n' "$GITHUB_SHA"
+            printf 'CHECKOUT_SHA=%s\n' "$(git rev-parse HEAD)"
+            printf 'PR_HEAD_SHA=%s\n' "${PR_HEAD_SHA:-n/a}"
+            printf 'IMAGE_ID=%s\n' "$IMAGE_ID"
+          } | tee trivy-provenance.txt
+
+      - name: Escanear imagen con Trivy (todas las severidades)
+        id: trivy_image
+        if: steps.build_image.outcome == 'success'
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: cifrado:ci
-          severity: HIGH,CRITICAL
-      - name: Generar SBOM (Syft)
-        uses: anchore/sbom-action@v0
+          scanners: vuln
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          format: json
+          output: trivy-image-full.json
+          exit-code: "0"
+
+      - name: Resumir Trivy y aplicar umbral
+        id: trivy_gate
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          if [[ ! -s trivy-image-full.json ]]; then
+            echo "No se generó el reporte JSON de Trivy."
+            exit 1
+          fi
+
+          if ! jq -e '.Results | type == "array"' trivy-image-full.json >/dev/null; then
+            echo "El reporte JSON de Trivy no tiene la estructura esperada."
+            exit 1
+          fi
+
+          {
+            echo "### Trivy: imagen cifrado:ci"
+            echo "| Severidad | Hallazgos |"
+            echo "|---|---:|"
+            for severity in CRITICAL HIGH MEDIUM LOW UNKNOWN; do
+              count=$(jq --arg severity "$severity" \
+                '[.Results[]?.Vulnerabilities[]? | select(.Severity == $severity)] | length' \
+                trivy-image-full.json)
+              echo "| $severity | $count |"
+            done
+          } | tee trivy-image-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+          blocking_findings=$(jq \
+            '[.Results[]?.Vulnerabilities[]? | select((.Severity == "HIGH" or .Severity == "CRITICAL") and ((((.FixedVersion // "") | gsub("\\s"; "")) != "") or (.Status != "affected" and .Status != "fix_deferred")))] | length' \
+            trivy-image-full.json)
+          unfixed_blockers=$(jq \
+            '[.Results[]?.Vulnerabilities[]? | select((.Severity == "HIGH" or .Severity == "CRITICAL") and (((.FixedVersion // "") | gsub("\\s"; "")) == "") and (.Status == "affected" or .Status == "fix_deferred"))] | length' \
+            trivy-image-full.json)
+
+          {
+            echo "### Excepciones HIGH/CRITICAL sin versión corregida indicada por Trivy"
+            echo "Solo los estados affected y fix_deferred se aceptan provisionalmente; revisar estos hallazgos en cada ejecución."
+            echo
+            echo "| Severidad | Estado Trivy | CVE | Paquete | Versión instalada |"
+            echo "|---|---|---|---|---|"
+            if [[ "$unfixed_blockers" -gt 0 ]]; then
+              jq -r '[.Results[]?.Vulnerabilities[]? | select((.Severity == "HIGH" or .Severity == "CRITICAL") and (((.FixedVersion // "") | gsub("\\s"; "")) == "") and (.Status == "affected" or .Status == "fix_deferred"))] | sort_by(.VulnerabilityID, .PkgName)[] | "| \(.Severity) | \(.Status) | \(.VulnerabilityID) | \(.PkgName) | \(.InstalledVersion) |"' trivy-image-full.json
+            else
+              echo "| — | — | Ninguna | — |"
+            fi
+          } | tee trivy-unfixed-findings.md >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$blocking_findings" -gt 0 ]]; then
+            echo "Gate bloqueado: $blocking_findings hallazgos HIGH/CRITICAL con versión corregida o estado que requiere revisión."
+            exit 1
+          fi
+
+          echo "Gate aprobado: no hay hallazgos HIGH/CRITICAL corregibles ni estados sin excepción documentada."
+          echo "Excepciones HIGH/CRITICAL sin FixedVersion: $unfixed_blockers; consultar el reporte de excepciones."
+
+      - name: Generar SBOM con Syft
+        id: sbom
+        if: always()
+        continue-on-error: true
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
           image: cifrado:ci
+          artifact-name: sbom-cifrado
 
-  # 4) DAST: probar la app en ejecucion con OWASP ZAP
+      - name: Guardar evidencia Trivy
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: trivy-evidencia-${{ github.run_id }}
+          path: |
+            trivy-image-full.json
+            trivy-image-summary.md
+            trivy-unfixed-findings.md
+            trivy-provenance.txt
+          if-no-files-found: warn
+
+      - name: Marcar fallos de imagen o SBOM
+        if: always()
+        run: |
+          if [[ "${{ steps.build_image.outcome }}" != "success" ||
+                "${{ steps.provenance.outcome }}" != "success" ||
+                "${{ steps.trivy_image.outcome }}" != "success" ||
+                "${{ steps.trivy_gate.outcome }}" != "success" ||
+                "${{ steps.sbom.outcome }}" != "success" ]]; then
+            exit 1
+          fi
+
   dast:
-    needs: imagen
+    name: DAST - OWASP ZAP
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Levantar la app
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Levantar API y Keycloak
         run: docker compose up -d --build cifrado
-      - name: Esperar a que responda
-        run: sleep 20
-      - name: DAST con OWASP ZAP (baseline)
-        uses: zaproxy/action-baseline@v0.12.0
+
+      - name: Esperar respuesta de la API
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://localhost:3000/salud >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose logs
+          exit 1
+
+      - name: Analizar con OWASP ZAP
+        uses: zaproxy/action-baseline@de8ad967d3548d44ef623df22cf95c3b0baf8b25 # v0.15.0
         with:
-          target: 'http://localhost:3000'
+          target: http://localhost:3000
+          artifact_name: reporte-zap
+          allow_issue_writing: false
+          fail_action: false
+
+      - name: Detener servicios
+        if: always()
+        run: docker compose down --volumes
