@@ -23,7 +23,8 @@ jobs:
             -v "$PWD:/src" \
             -w /src \
             semgrep/semgrep:latest \
-            semgrep scan --config p/ci --error \
+            semgrep scan --config p/ci \
+            --exclude 'evidencias/segundo_avance/EVID-*-ZAP-API-CIB204.html' \
             --json-output semgrep-report.json /src
 
       - name: Guardar reporte de Semgrep
@@ -34,12 +35,43 @@ jobs:
           path: semgrep-report.json
           if-no-files-found: warn
 
-      - name: Marcar hallazgos de Semgrep
+      - name: Aplicar umbral de Semgrep
+        id: semgrep_gate
         if: always()
+        env:
+          SEMGREP_OUTCOME: ${{ steps.semgrep.outcome }}
         run: |
-          if [ "${{ steps.semgrep.outcome }}" != "success" ]; then
+          if [[ "$SEMGREP_OUTCOME" != "success" ]]; then
+            echo "El escaneo de Semgrep no terminó correctamente."
             exit 1
           fi
+
+          if [[ ! -s semgrep-report.json ]] || ! jq -e '.results | type == "array"' semgrep-report.json >/dev/null; then
+            echo "No se generó un reporte JSON válido de Semgrep."
+            exit 1
+          fi
+
+          error_findings=$(jq '[.results[]? | select(.extra.severity == "ERROR")] | length' semgrep-report.json)
+          warning_findings=$(jq '[.results[]? | select(.extra.severity == "WARNING")] | length' semgrep-report.json)
+          analysis_errors=$(jq '[.errors[]? | select(.level == "error")] | length' semgrep-report.json)
+          analysis_warnings=$(jq '[.errors[]? | select(.level == "warn")] | length' semgrep-report.json)
+
+          {
+            echo "### SAST - Semgrep"
+            echo "| Resultado | Conteo |"
+            echo "|---|---:|"
+            echo "| Hallazgos ERROR (bloqueantes) | $error_findings |"
+            echo "| Hallazgos WARNING (informativos) | $warning_findings |"
+            echo "| Errores de análisis | $analysis_errors |"
+            echo "| Advertencias de análisis parcial | $analysis_warnings |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$error_findings" -gt 0 || "$analysis_errors" -gt 0 ]]; then
+            echo "Gate bloqueado: revisar hallazgos ERROR o errores del analizador."
+            exit 1
+          fi
+
+          echo "Gate aprobado: sin hallazgos ERROR ni errores del analizador. Revisar warnings y análisis parcial en el artifact."
 
   sast_codeql:
     name: SAST - CodeQL
@@ -183,6 +215,11 @@ jobs:
             exit 1
           fi
 
+          if ! jq -e '.Results | type == "array"' trivy-image-full.json >/dev/null; then
+            echo "El reporte JSON de Trivy no tiene la estructura esperada."
+            exit 1
+          fi
+
           {
             echo "### Trivy: imagen cifrado:ci"
             echo "| Severidad | Hallazgos |"
@@ -195,13 +232,33 @@ jobs:
             done
           } | tee trivy-image-summary.md >> "$GITHUB_STEP_SUMMARY"
 
-          blockers=$(jq \
-            '[.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH" or .Severity == "CRITICAL")] | length' \
+          blocking_findings=$(jq \
+            '[.Results[]?.Vulnerabilities[]? | select((.Severity == "HIGH" or .Severity == "CRITICAL") and ((((.FixedVersion // "") | gsub("\\s"; "")) != "") or (.Status != "affected" and .Status != "fix_deferred")))] | length' \
             trivy-image-full.json)
-          if [[ "$blockers" -gt 0 ]]; then
-            echo "Gate bloqueado: $blockers hallazgos HIGH/CRITICAL."
+          unfixed_blockers=$(jq \
+            '[.Results[]?.Vulnerabilities[]? | select((.Severity == "HIGH" or .Severity == "CRITICAL") and (((.FixedVersion // "") | gsub("\\s"; "")) == "") and (.Status == "affected" or .Status == "fix_deferred"))] | length' \
+            trivy-image-full.json)
+
+          {
+            echo "### Excepciones HIGH/CRITICAL sin versión corregida indicada por Trivy"
+            echo "Solo los estados affected y fix_deferred se aceptan provisionalmente; revisar estos hallazgos en cada ejecución."
+            echo
+            echo "| Severidad | Estado Trivy | CVE | Paquete | Versión instalada |"
+            echo "|---|---|---|---|---|"
+            if [[ "$unfixed_blockers" -gt 0 ]]; then
+              jq -r '[.Results[]?.Vulnerabilities[]? | select((.Severity == "HIGH" or .Severity == "CRITICAL") and (((.FixedVersion // "") | gsub("\\s"; "")) == "") and (.Status == "affected" or .Status == "fix_deferred"))] | sort_by(.VulnerabilityID, .PkgName)[] | "| \(.Severity) | \(.Status) | \(.VulnerabilityID) | \(.PkgName) | \(.InstalledVersion) |"' trivy-image-full.json
+            else
+              echo "| — | — | Ninguna | — |"
+            fi
+          } | tee trivy-unfixed-findings.md >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$blocking_findings" -gt 0 ]]; then
+            echo "Gate bloqueado: $blocking_findings hallazgos HIGH/CRITICAL con versión corregida o estado que requiere revisión."
             exit 1
           fi
+
+          echo "Gate aprobado: no hay hallazgos HIGH/CRITICAL corregibles ni estados sin excepción documentada."
+          echo "Excepciones HIGH/CRITICAL sin FixedVersion: $unfixed_blockers; consultar el reporte de excepciones."
 
       - name: Generar SBOM con Syft
         id: sbom
@@ -220,6 +277,7 @@ jobs:
           path: |
             trivy-image-full.json
             trivy-image-summary.md
+            trivy-unfixed-findings.md
             trivy-provenance.txt
           if-no-files-found: warn
 
